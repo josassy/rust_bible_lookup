@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
 use std::io::prelude::*;
 use csv::Reader;
@@ -41,6 +42,7 @@ fn main() {
         let mut chapter = String::new();
         let mut verse = String::new();
         while !found {
+            book.clear();
             print_fl("Enter Book: ");
             io::stdin().read_line(&mut book).unwrap();
             book = book.trim().to_uppercase();
@@ -66,6 +68,7 @@ fn main() {
         let chapter_search_pos = bible.seek(std::io::SeekFrom::Current(0)).unwrap();
         found = false;
         while !found {
+            chapter.clear();
             print_fl("Enter Chapter: ");
             io::stdin().read_line(&mut chapter).unwrap();
             chapter = chapter.trim().to_uppercase();
@@ -76,7 +79,7 @@ fn main() {
             let _ = bible.seek(std::io::SeekFrom::Start(chapter_search_pos));
             found = search_chapter(&mut bible, &chapter);
             if !found {
-                println!("Could not find chapter {:?} in {:?}.", chapter, book);
+                println!("Could not find chapter {} in {}.", chapter, book);
                 println!("Try again or enter \"RESET\" to restart query.");
             }
         }
@@ -87,8 +90,9 @@ fn main() {
 
         // look for verse
         let verse_search_pos = bible.seek(std::io::SeekFrom::Current(0)).unwrap();
-        let verse_result = String::new();
+        let mut verse_result = String::new();
         while verse_result.is_empty() {
+            verse.clear();
             print_fl("Enter Verse: ");
             io::stdin().read_line(&mut verse).unwrap();
             verse = verse.trim().to_uppercase();
@@ -97,20 +101,29 @@ fn main() {
                 break;
             }
             let _ = bible.seek(std::io::SeekFrom::Start(verse_search_pos));
-            found = search_verse(&mut bible, &verse);
-            if !found {
-                println!("Could not find verse {:?} in {:?} {:?}.", verse, book, chapter);
+            verse_result = search_verse(&mut bible, &verse);
+            if verse_result.is_empty() {
+                println!("Could not find verse {} in {} {}.", verse, book, chapter);
                 println!("Try again or enter \"RESET\" to restart query.");
             }
         }
         // if chapter was not found and we are out of loop, reset to beginning
-        if !found {
+        if verse_result.is_empty() {
             continue;
         }
         
         // print the found verse
+        let output = pretty_print(&book, &chapter, &verse, &verse_result);
         println!("The verse you requested is:");
-        pretty_print(&book, &chapter, &verse, &verse_result);
+        println!("{}", output);
+
+        // write to file
+        let mut out_file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open("verses.txt")
+            .expect("Unable to open output verses.txt file");
+        writeln!(out_file, "{}", output).expect("Unable to write to verses.txt file");
 
         // ask if user wants another verse
         print_fl("Do you want to look up another verse? (y/n): ");
@@ -124,6 +137,7 @@ fn main() {
     }
 }
 
+
 /**
  * Search the Bible.txt file for the desired book
  */
@@ -133,7 +147,7 @@ fn search_book(file: &mut impl BufRead, book: &String) -> bool {
         line.clear();
         let len = file.read_line(&mut line).unwrap();
         // if line empty reached end of file
-        if len == 0 {
+        if line == "" {
             return false;
         }
 
@@ -152,16 +166,61 @@ fn search_book(file: &mut impl BufRead, book: &String) -> bool {
 /**
  * Search the Bible.txt file for the desired chapter
  */
-fn search_chapter(file: &mut impl BufRead, book: &String) -> bool {
-    true
+fn search_chapter(file: &mut impl BufRead, chapter: &String) -> bool {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let _ = file.read_line(&mut line).unwrap();
+        
+        // if line empty or reach "THE BOOK OF", went too far.
+        if line == "" || line.contains("THE BOOK OF") {
+            return false;
+        }
+
+        line = line.trim().to_uppercase();
+
+        // split line into tokens
+        let split_line: Vec<&str> = line.split(' ').collect();
+
+        if split_line.len() > 1 {
+            let prefix = split_line.get(0).unwrap();
+            let number = split_line.get(1).unwrap();
+            // If the line begins with PSALM or CHAPTER and the number matches, we found it.
+            if ["PSALM", "CHAPTER"].contains(prefix) && number.trim() == chapter {
+                return true;
+            }
+        }
+    }
 }
 
 
 /**
  * Search the Bible.txt file for the desired verse
  */
-fn search_verse(file: &mut impl BufRead, book: &String) -> bool {
-    true
+fn search_verse(file: &mut impl BufRead, verse: &String) -> String {
+    let mut line = String::new();
+    let mut result = String::new();
+    loop {
+        line.clear();
+        let len = file.read_line(&mut line).unwrap();
+        line = line.trim().to_uppercase();
+        
+        // If string empty or we reach any of these tokens, went too far
+        if line == "" {
+            return result;
+        }
+        for pattern in ["CHAPTER", "PSALM", "THE BOOK OF"].iter() {
+            if len >= pattern.len() && &line[..pattern.len()] == *pattern {
+                return result;
+            }
+        }
+
+        // found verse
+        if len >= verse.len() && &line[..verse.len()] == verse {
+            result = line[verse.len()+1..].trim().to_string();
+            return result;
+        }
+    }
 }
 
 
@@ -175,7 +234,6 @@ fn read_abbreviations(filename: String, hash_map: &mut HashMap<String,String>) -
     for record in csv_reader.records() {
         let record = record?;
         hash_map.insert(record.get(0).unwrap().to_uppercase(), record.get(1).unwrap().to_string());
-        // println!("{:?}", record);
     }
     Ok(())
 }
@@ -196,8 +254,28 @@ fn check_quit(input_str: &String) {
  * Helper function to pretty_print a string onto multiple lines, delimited at 
  * 80 chars. Will break on a word division.
  */
-fn pretty_print(book: &String, chapter: &String, verse: &String, verse_result: &String) {
-
+fn pretty_print(book: &String, chapter: &String, verse: &String, verse_result: &String) -> String {
+    let mut output_str = format!("{} {}:{} {}", book, chapter, verse, verse_result);
+    let mut working_index = 0;
+    while &output_str[working_index..].len() > &80 {
+        working_index += 80;
+        loop {
+            // If found space, replace it with newline
+            // Rust is a total pain with string indexing, so we are going with this
+            if &output_str[working_index..working_index+1] == " " {
+                let mut replace_result: String = output_str[..working_index].to_string();
+                replace_result.push('\n');
+                replace_result.push_str(&output_str[working_index+1..]);
+                output_str = replace_result;
+                working_index += 1;
+                break;
+            }
+            else {
+                working_index -= 1;
+            }
+        }
+    }
+    return output_str;
 }
 
 
@@ -206,6 +284,6 @@ fn pretty_print(book: &String, chapter: &String, verse: &String, verse_result: &
  * Useful for printing and receiving input on the same line.
  */
 fn print_fl(input: &str) {
-    print!("{:?}", &input);
+    print!("{}", &input);
     let _ = io::stdout().flush();
 }
