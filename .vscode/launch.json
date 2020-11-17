@@ -21,25 +21,6 @@
       },
       "args": [],
       "cwd": "${workspaceFolder}"
-    },
-    {
-      "type": "lldb",
-      "request": "launch",
-      "name": "Debug unit tests in executable 'rust_bible_lookup'",
-      "cargo": {
-        "args": [
-          "test",
-          "--no-run",
-          "--bin=rust_bible_lookup",
-          "--package=rust_bible_lookup"
-        ],
-        "filter": {
-          "name": "rust_bible_lookup",
-          "kind": "bin"
-        }
-      },
-      "args": [],
-      "cwd": "${workspaceFolder}"
     }
   ]
 }
